@@ -96,15 +96,112 @@ class AiarBaseTests(unittest.TestCase):
 
         # Header present
         self.assertIn("#!/bin/bash", text)
-        self.assertIn("# --- DATA PAYLOAD ---", text)
-        # Separator injected
-        self.assertIn("SEPARATOR=\"++++++++++--------:", text)
-        # Paths appear after separator lines
-        self.assertIn("a.txt", text)
-        self.assertIn("b.txt", text)
+        self.assertIn("# --- DATA ---", text)
+        # Separator base injected
+        self.assertIn("++++++++++--------:", text)
+        # Text file markers present
+        self.assertIn(":t:dir/a.txt", text)
+        self.assertIn(":t:b.txt", text)
         # File contents are included
         self.assertIn("content-a", text)
         self.assertIn("content-b", text)
+
+    def test_create_aiar_handles_binary_files(self):
+        base_dir = self.root
+        binary_file = self.root / "data.bin"
+        text_file = self.root / "readme.txt"
+        
+        # Create binary file with null bytes
+        binary_file.write_bytes(b"\x00\x01\x02\xff\xfe")
+        text_file.write_text("Hello\n", encoding="utf-8")
+
+        out = io.StringIO()
+        create_aiar(out, {binary_file, text_file}, base_dir)
+        text = out.getvalue()
+
+        # Binary file marker present
+        self.assertIn(":b:data.bin", text)
+        # Text file marker present
+        self.assertIn(":t:readme.txt", text)
+        # Text content preserved
+        self.assertIn("Hello", text)
+        # Base64 data present (binary file)
+        # The base64 of b"\x00\x01\x02\xff\xfe" is "AAEC//4="
+        self.assertIn("AAEC//4=", text)
+
+    def test_create_aiar_binary_all_option(self):
+        base_dir = self.root
+        text_file = self.root / "test.txt"
+        text_file.write_text("Plain text", encoding="utf-8")
+
+        out = io.StringIO()
+        create_aiar(out, {text_file}, base_dir, binary_all=True)
+        text = out.getvalue()
+
+        # With binary_all=True, text file should be marked as binary
+        self.assertIn(":b:test.txt", text)
+        # Should NOT have text marker
+        self.assertNotIn(":t:test.txt", text)
+        # Content should be base64-encoded
+        # "Plain text" in base64 is "UGxhaW4gdGV4dA=="
+        self.assertIn("UGxhaW4gdGV4dA==", text)
+
+    def test_create_aiar_python_lang(self):
+        base_dir = self.root
+        text_file = self.root / "hello.txt"
+        binary_file = self.root / "data.bin"
+        
+        text_file.write_text("Hello World\n", encoding="utf-8")
+        binary_file.write_bytes(b"\x00\x01\x02\xff\xfe")
+
+        out = io.StringIO()
+        create_aiar(out, {text_file, binary_file}, base_dir, lang="py")
+        text = out.getvalue()
+
+        # Python shebang should NOT be present (Python doesn't use shebangs the same way)
+        self.assertNotIn("#!/bin/bash", text)
+        # Python imports should be present
+        self.assertIn("import sys, os, re, base64", text)
+        self.assertIn("from pathlib import Path", text)
+        # Separator should be present
+        self.assertIn("++++++++++--------:", text)
+        # Python-style commented markers
+        self.assertIn("# ++++++++++--------:", text)
+        self.assertIn(":t:hello.txt", text)
+        self.assertIn(":b:data.bin", text)
+        # Content should be commented
+        self.assertIn("# Hello World", text)
+        # Base64 data should be commented
+        self.assertIn("# AAEC//4=", text)
+
+    def test_create_aiar_bare_lang(self):
+        base_dir = self.root
+        text_file = self.root / "hello.txt"
+        binary_file = self.root / "data.bin"
+        
+        text_file.write_text("Hello World\n", encoding="utf-8")
+        binary_file.write_bytes(b"\x00\x01\x02\xff\xfe")
+
+        out = io.StringIO()
+        create_aiar(out, {text_file, binary_file}, base_dir, lang="bare")
+        text = out.getvalue()
+
+        # Should NOT have bash script
+        self.assertNotIn("#!/bin/bash", text)
+        self.assertNotIn("handle_error", text)
+        self.assertNotIn("extract_all", text)
+        # Should have separator definition
+        self.assertIn('SEPARATOR="++++++++++--------:', text)
+        # Separator should be present in file markers
+        self.assertIn("++++++++++--------:", text)
+        self.assertIn(":t:hello.txt", text)
+        self.assertIn(":b:data.bin", text)
+        # Content should NOT be commented (plain text)
+        self.assertIn("Hello World", text)
+        self.assertNotIn("# Hello World", text)
+        # Base64 data should NOT be commented
+        self.assertIn("AAEC//4=", text)
+        self.assertNotIn("# AAEC//4=", text)
 
 
 if __name__ == "__main__":
