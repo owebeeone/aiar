@@ -103,7 +103,8 @@ AIAR_PYTHON_HEADER = r"""
 import sys, os, re, base64
 from pathlib import Path
 
-SEP = re.escape("{separator}")
+SEPARATOR="{separator}"
+SEP = re.escape(SEPARATOR)
 
 def _safe_dest(rel: str) -> Path:
     p = Path(rel)
@@ -157,6 +158,90 @@ def extract_all():
 extract_all()
 print("Extraction complete.")
 sys.exit(0)
+"""
+
+NODE_JS_HEADER = r"""
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+
+function escapeRegex(str) {
+    // This escapes all characters that have a special meaning in a regex.
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const SEPARATOR = "++++++++++--------:";
+const SEP = escapeRegex(SEPARATOR);
+
+function safeDest(rel) {
+    if (path.isAbsolute(rel)) {
+        throw new Error(`Absolute path not allowed: ${rel}`);
+    }
+    const dest = path.resolve(process.cwd(), rel);
+    // Ensure the resolved path is still within the current working directory.
+    if (!dest.startsWith(process.cwd())) {
+        throw new Error(`Path escapes output root: ${rel}`);
+    }
+    return dest;
+}
+
+function extractAll() {
+    // Read this script's own source code into a string.
+    const scriptContent = fs.readFileSync(__filename, 'utf8');
+
+    // This regex finds all commented payload blocks directly from the script's source.
+    // It looks for a '//'-commented separator line, captures type/path, then captures
+    // all subsequent commented lines until the next separator or the end of the file.
+    const pat = new RegExp(
+        `^// ?${SEP}([tb]):([^\\n]+)\\n(.*?)(?=(^// ?${SEP}[tb]:|\\Z))`,
+        'gms' // g: global, m: multiline, s: dotall
+    );
+
+    const matches = [...scriptContent.matchAll(pat)];
+
+    if (matches.length === 0) {
+        console.error("Error: No payload sections found in data block.");
+        process.exit(1);
+    }
+    
+    for (const match of matches) {
+        const [, ftype, relPath, body] = match;
+        const cleanPath = relPath.trim();
+        
+        let dest;
+        try {
+            dest = safeDest(cleanPath);
+        } catch (e) {
+            console.warn(`Warning: ${e.message}. Skipping.`);
+            continue;
+        }
+
+        if (fs.existsSync(dest)) {
+            console.log(`Skipping already existing file: '${dest}'`);
+            continue;
+        }
+
+        console.log(`Creating: ${dest}`);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+
+        // The captured body is still commented. We must uncomment it.
+        // This regex removes a leading '//' and an optional space from each line.
+        const uncommentedBody = body.replace(/^\/\/ ?/gm, '');
+
+        if (ftype === 't') { // Text file
+            fs.writeFileSync(dest, uncommentedBody, { encoding: 'utf8' });
+        } else { // Binary file
+            // Decode the base64 content into a buffer and write it.
+            const buffer = Buffer.from(uncommentedBody.trim(), 'base64');
+            fs.writeFileSync(dest, buffer);
+        }
+    }
+}
+
+extractAll();
+console.log("Extraction complete.");
+process.exit(0);
 """
 
 def find_git_root(start_path):
@@ -428,60 +513,257 @@ def create_aiar(output_file, files_to_archive, base_dir, binary_all=False, lang=
         create_aiar_bash(output_file, files_to_archive, base_dir, binary_all)
 
 
+def _safe_dest(rel: str) -> Path:
+    """Validate that a relative path doesn't escape the current directory."""
+    p = Path(rel)
+    if p.is_absolute():
+        raise ValueError(f"Absolute path not allowed: {rel}")
+    dest = (Path(".") / p).resolve()
+    if Path(".").resolve() not in (set(dest.parents) | {dest}):
+        raise ValueError(f"Path escapes output root: {rel}")
+    return dest
+
+
+def extract_aiar(aiar_file, test_mode=False, output_dir=None):
+    """Extract files from an aiar archive.
+    
+    Auto-detects the format (bash, python, or bare) and extracts accordingly.
+    
+    Args:
+        aiar_file: Path to the aiar file to extract
+        test_mode: If True, only list files without extracting
+        output_dir: Directory to extract to (default: current directory)
+    
+    Returns:
+        List of extracted/listed file paths
+    """
+    import base64
+    import re
+    
+    # Resolve the aiar_file path before changing directories
+    aiar_file = Path(aiar_file).resolve()
+    
+    if output_dir:
+        output_dir = Path(output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        original_cwd = Path.cwd()
+        os.chdir(output_dir)
+    else:
+        original_cwd = None
+    
+    try:
+        with open(aiar_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Find the separator definition
+        sep_match = re.search(r'SEPARATOR="([^"]+)"', content)
+        if not sep_match:
+            # Try alternate format (shell variable without quotes)
+            sep_match = re.search(r'SEPARATOR=([^\s\n]+)', content)
+        
+        if not sep_match:
+            raise ValueError("Could not find SEPARATOR definition in aiar file")
+        
+        separator = sep_match.group(1)
+        escaped_sep = re.escape(separator)
+        
+        # Detect format: check if content has "# SEPARATOR" (Python) or just "SEPARATOR" (bash/bare)
+        is_python = f"# {separator}" in content
+        
+        if is_python:
+            # Python format: files are in comments
+            pattern = re.compile(
+                rf"^# ?{escaped_sep}([tb]):([^\n]+)\n(.*?)(?=^# ?{escaped_sep}[tb]:|\Z)",
+                re.DOTALL | re.MULTILINE
+            )
+            
+            extracted_files = []
+            found_files = 0
+            for ftype, path, body in pattern.findall(content):
+                found_files += 1
+                path = path.strip()
+                try:
+                    dest = _safe_dest(path)
+                except ValueError as e:
+                    print(f"Warning: {e}. Skipping.")
+                    continue
+                
+                if test_mode:
+                    print(path)
+                    extracted_files.append(path)
+                    continue
+                
+                if dest.exists():
+                    print(f"Skipping already existing file: '{dest}'")
+                    continue
+                
+                print(f"Creating: {dest}")
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Uncomment the body
+                uncommented_body = re.sub(r"^# ?", "", body, flags=re.MULTILINE)
+                
+                if ftype == "t":
+                    with open(dest, "w", encoding="utf-8", newline="\n") as out:
+                        out.write(uncommented_body)
+                else:  # binary
+                    with open(dest, "wb") as out:
+                        out.write(base64.b64decode(uncommented_body.strip().encode("ascii"), validate=False))
+                
+                extracted_files.append(str(dest))
+            
+            if found_files == 0:
+                print("Warning: No files found in archive.")
+        
+        else:
+            # Bash/bare format: files are not commented
+            pattern = re.compile(
+                rf"^{escaped_sep}([tb]):([^\n]+)\n(.*?)(?=^{escaped_sep}[tb]:|\Z)",
+                re.DOTALL | re.MULTILINE
+            )
+            
+            extracted_files = []
+            found_files = 0
+            for ftype, path, body in pattern.findall(content):
+                found_files += 1
+                path = path.strip()
+                try:
+                    dest = _safe_dest(path)
+                except ValueError as e:
+                    print(f"Warning: {e}. Skipping.")
+                    continue
+                
+                if test_mode:
+                    print(path)
+                    extracted_files.append(path)
+                    continue
+                
+                if dest.exists():
+                    print(f"Skipping already existing file: '{dest}'")
+                    continue
+                
+                print(f"Creating: {dest}")
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                
+                if ftype == "t":
+                    with open(dest, "w", encoding="utf-8", newline="\n") as out:
+                        out.write(body)
+                else:  # binary
+                    with open(dest, "wb") as out:
+                        out.write(base64.b64decode(body.strip().encode("ascii"), validate=False))
+                
+                extracted_files.append(str(dest))
+            
+            if found_files == 0:
+                print("Warning: No files found in archive.")
+        
+        return extracted_files
+    
+    finally:
+        if original_cwd:
+            os.chdir(original_cwd)
+
+
 def _main():
     parser = argparse.ArgumentParser(
-        description="Generate an aiar (AI Archive) self-extracting shell script.",
+        description="Generate or extract aiar (AI Archive) files.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument(
+    
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    
+    # Create command
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create an aiar archive",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    create_parser.add_argument(
         "paths", nargs="+", help="One or more files or directories to archive."
     )
-    parser.add_argument(
+    create_parser.add_argument(
         "-o",
         "--output",
         help="Output file for the aiar script. Defaults to stdout.",
     )
-    parser.add_argument(
+    create_parser.add_argument(
         "--no-gitignore",
         action="store_true",
         help="Disable using .gitignore files for exclusion.",
     )
-    parser.add_argument(
+    create_parser.add_argument(
         "--binary-all",
         action="store_true",
         help="Treat all files as binary (base64-encode everything).",
     )
-    parser.add_argument(
+    create_parser.add_argument(
         "--lang",
         choices=["bash", "py", "bare"],
         default="bash",
         help="Language for self-extracting script: bash, py, or bare (data only, default: bash).",
     )
+    
+    # Extract command
+    extract_parser = subparsers.add_parser(
+        "extract",
+        help="Extract an aiar archive",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    extract_parser.add_argument(
+        "aiar_file",
+        help="The aiar file to extract.",
+    )
+    extract_parser.add_argument(
+        "-t",
+        "--test",
+        action="store_true",
+        help="List files without extracting (like tar -t).",
+    )
+    extract_parser.add_argument(
+        "-C",
+        "--directory",
+        help="Extract to specified directory.",
+    )
 
     args = parser.parse_args()
     
-    resolved_paths = [Path(p).resolve() for p in args.paths]
-    base_dir = Path(os.path.commonpath(resolved_paths))
-    if base_dir.is_file():
-        base_dir = base_dir.parent
-
-    spec = get_gitignore_spec(base_dir, not args.no_gitignore)
-    files_to_process = find_files_to_archive(resolved_paths, spec, base_dir)
-
-    # Use a set to handle potential duplicates if paths overlap
-    unique_files = set(files_to_process)
-
-    if not unique_files:
-        print("No files found to archive.", file=sys.stderr)
+    # Handle backward compatibility: if no command specified, show help
+    if not args.command:
+        parser.print_help()
         return
+    
+    if args.command == "create":
+        resolved_paths = [Path(p).resolve() for p in args.paths]
+        base_dir = Path(os.path.commonpath(resolved_paths))
+        if base_dir.is_file():
+            base_dir = base_dir.parent
 
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            create_aiar(f, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
-        print(f"aiar script created at '{args.output}'")
-        os.chmod(args.output, 0o755) # Make it executable
-    else:
-        create_aiar(sys.stdout, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
+        spec = get_gitignore_spec(base_dir, not args.no_gitignore)
+        files_to_process = find_files_to_archive(resolved_paths, spec, base_dir)
+
+        # Use a set to handle potential duplicates if paths overlap
+        unique_files = set(files_to_process)
+
+        if not unique_files:
+            print("No files found to archive.", file=sys.stderr)
+            return
+
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                create_aiar(f, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
+            print(f"aiar script created at '{args.output}'")
+            os.chmod(args.output, 0o755) # Make it executable
+        else:
+            create_aiar(sys.stdout, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
+    
+    elif args.command == "extract":
+        try:
+            extract_aiar(args.aiar_file, test_mode=args.test, output_dir=args.directory)
+            if not args.test:
+                print("Extraction complete.")
+        except Exception as e:
+            print(f"Error extracting aiar file: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":
