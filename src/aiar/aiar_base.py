@@ -558,14 +558,23 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
     # Store the original working directory and output_dir for verbose output
     original_cwd = Path.cwd()
     output_dir_name = None
+    output_dir_resolved = None
+    directory_created = False
     
     if output_dir:
         output_dir_name = output_dir  # Keep original name for display
-        output_dir = Path(output_dir).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        os.chdir(output_dir)
+        output_dir_resolved = Path(output_dir).resolve()
+        # Don't create directory yet - wait until we know we have files to extract
     else:
         original_cwd = None
+    
+    def ensure_output_dir():
+        """Create and change to output directory if needed (only once, on first file)."""
+        nonlocal directory_created
+        if output_dir_resolved and not directory_created:
+            output_dir_resolved.mkdir(parents=True, exist_ok=True)
+            os.chdir(output_dir_resolved)
+            directory_created = True
     
     try:
         with open(aiar_file, "r", encoding="utf-8") as f:
@@ -635,6 +644,9 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     else:
                         display_path = path
                     print(f"Extracting: {display_path}")
+                
+                # Create output directory now that we know we have a file to extract
+                ensure_output_dir()
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Uncomment the body using the detected comment prefix
@@ -699,6 +711,9 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     else:
                         display_path = path
                     print(f"Extracting: {display_path}")
+                
+                # Create output directory now that we know we have a file to extract
+                ensure_output_dir()
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 if ftype == "t":
