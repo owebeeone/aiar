@@ -52,11 +52,11 @@ handle_error() {{
 # Function to close the previous file descriptor and wait for bg processes
 close_previous_fd() {{
     if [ "$writing" = true ]; then
-        exec 3>&-
+      exec 3>&-
         # Wait for any background process (like base64) to finish
         wait 2>/dev/null || true
     fi
-    writing=false
+      writing=false
 }}
 
 while read -r line; do
@@ -76,7 +76,7 @@ while read -r line; do
         writing=true
       elif [ "$type" == "t" ]; then
         exec 3>"$filepath" || handle_error "Cannot open '$filepath' for writing."
-        writing=true
+      writing=true
       else
         handle_error "Invalid file type '$type' in separator."
       fi
@@ -160,33 +160,32 @@ print("Extraction complete.")
 sys.exit(0)
 """
 
-NODE_JS_HEADER = r"""
-#!/usr/bin/env node
+NODE_JS_HEADER = r"""#!/usr/bin/env node
 
 const fs = require('fs');
 const path = require('path');
 
-function escapeRegex(str) {
+function escapeRegex(str) {{
     // This escapes all characters that have a special meaning in a regex.
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+    return str.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
+}}
 
-const SEPARATOR = "++++++++++--------:";
+const SEPARATOR = "{separator}";
 const SEP = escapeRegex(SEPARATOR);
 
-function safeDest(rel) {
-    if (path.isAbsolute(rel)) {
-        throw new Error(`Absolute path not allowed: ${rel}`);
-    }
+function safeDest(rel) {{
+    if (path.isAbsolute(rel)) {{
+        throw new Error(`Absolute path not allowed: ${{rel}}`);
+    }}
     const dest = path.resolve(process.cwd(), rel);
     // Ensure the resolved path is still within the current working directory.
-    if (!dest.startsWith(process.cwd())) {
-        throw new Error(`Path escapes output root: ${rel}`);
-    }
+    if (!dest.startsWith(process.cwd())) {{
+        throw new Error(`Path escapes output root: ${{rel}}`);
+    }}
     return dest;
-}
+}}
 
-function extractAll() {
+function extractAll() {{
     // Read this script's own source code into a string.
     const scriptContent = fs.readFileSync(__filename, 'utf8');
 
@@ -194,50 +193,50 @@ function extractAll() {
     // It looks for a '//'-commented separator line, captures type/path, then captures
     // all subsequent commented lines until the next separator or the end of the file.
     const pat = new RegExp(
-        `^// ?${SEP}([tb]):([^\\n]+)\\n(.*?)(?=(^// ?${SEP}[tb]:|\\Z))`,
+        `^// ?${{SEP}}([tb]):([^\\n]+)\\n(.*?)(?=(^// ?${{SEP}}[tb]:|\\Z))`,
         'gms' // g: global, m: multiline, s: dotall
     );
 
     const matches = [...scriptContent.matchAll(pat)];
 
-    if (matches.length === 0) {
+    if (matches.length === 0) {{
         console.error("Error: No payload sections found in data block.");
         process.exit(1);
-    }
+    }}
     
-    for (const match of matches) {
+    for (const match of matches) {{
         const [, ftype, relPath, body] = match;
         const cleanPath = relPath.trim();
         
         let dest;
-        try {
+        try {{
             dest = safeDest(cleanPath);
-        } catch (e) {
-            console.warn(`Warning: ${e.message}. Skipping.`);
+        }} catch (e) {{
+            console.warn(`Warning: ${{e.message}}. Skipping.`);
             continue;
-        }
+        }}
 
-        if (fs.existsSync(dest)) {
-            console.log(`Skipping already existing file: '${dest}'`);
+        if (fs.existsSync(dest)) {{
+            console.log(`Skipping already existing file: '${{dest}}'`);
             continue;
-        }
+        }}
 
-        console.log(`Creating: ${dest}`);
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        console.log(`Creating: ${{dest}}`);
+        fs.mkdirSync(path.dirname(dest), {{ recursive: true }});
 
         // The captured body is still commented. We must uncomment it.
         // This regex removes a leading '//' and an optional space from each line.
         const uncommentedBody = body.replace(/^\/\/ ?/gm, '');
 
-        if (ftype === 't') { // Text file
-            fs.writeFileSync(dest, uncommentedBody, { encoding: 'utf8' });
-        } else { // Binary file
+        if (ftype === 't') {{ // Text file
+            fs.writeFileSync(dest, uncommentedBody, {{ encoding: 'utf8' }});
+        }} else {{ // Binary file
             // Decode the base64 content into a buffer and write it.
             const buffer = Buffer.from(uncommentedBody.trim(), 'base64');
             fs.writeFileSync(dest, buffer);
-        }
-    }
-}
+        }}
+    }}
+}}
 
 extractAll();
 console.log("Extraction complete.");
@@ -305,10 +304,10 @@ def find_files_to_archive(paths, spec, base_dir) -> Generator[Path, None, None]:
             for filename in files:
                 full_path = root_path / filename
                 rel_file = full_path.relative_to(base_dir).as_posix()
-
+                
                 if spec and spec.match_file(rel_file):
                     continue
-
+                
                 yield full_path
 
 
@@ -322,10 +321,10 @@ def is_binary_file(filepath):
         return False
 
 
-def _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all=False):
+def _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all=False, comment_prefix="", verbose=False):
     """Common function to write the data section of aiar archives.
     
-    This handles the actual file encoding and writing, used by both bash and bare formats.
+    This handles the actual file encoding and writing, used by all formats.
     
     Args:
         output_file: File object to write the archive to
@@ -333,39 +332,52 @@ def _write_aiar_data_section(output_file, files_to_archive, base_dir, separator,
         base_dir: Base directory for relative paths
         separator: The separator string to use
         binary_all: If True, encode all files as binary (base64)
+        comment_prefix: Prefix for commenting (e.g., "# ", "// ", or "" for uncommented)
+        verbose: If True, print filenames as they are added
     """
     import base64
-    
+
     sorted_files = sorted(list(files_to_archive))
 
     for filepath in sorted_files:
         try:
             # Create a relative path for the archive to preserve structure.
             relative_path = filepath.relative_to(base_dir).as_posix()
+            
+            if verbose:
+                print(f"Adding: {relative_path}")
 
             # Determine if file should be binary
             is_binary = binary_all or is_binary_file(filepath)
             
             if is_binary:
-                # Binary file: SEPARATOR:b:filepath
-                output_file.write(f"{separator}b:{relative_path}\n")
+                # Binary file: [comment_prefix]SEPARATOR:b:filepath
+                output_file.write(f"{comment_prefix}{separator}b:{relative_path}\n")
                 with open(filepath, "rb") as f:
                     data = f.read()
                     encoded = base64.b64encode(data).decode("ascii")
                     # Write base64 in chunks of 76 chars for readability
                     for i in range(0, len(encoded), 76):
-                        output_file.write(encoded[i:i+76] + "\n")
+                        output_file.write(f"{comment_prefix}{encoded[i:i+76]}\n")
             else:
-                # Text file: SEPARATOR:t:filepath
-                output_file.write(f"{separator}t:{relative_path}\n")
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                # Text file: [comment_prefix]SEPARATOR:t:filepath
+                output_file.write(f"{comment_prefix}{separator}t:{relative_path}\n")
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                     # Read entire content to preserve files without trailing newline
                     content = f.read()
-                    output_file.write(content)
-                    # Ensure we end with a newline for proper parsing
-                    if content and not content.endswith("\n"):
-                        output_file.write("\n")
-                    
+                    if comment_prefix:
+                        # Comment each line of the content
+                        for line in content.splitlines(keepends=True):
+                            output_file.write(f"{comment_prefix}{line}")
+                        # Ensure we end with a newline for proper parsing
+                        if content and not content.endswith("\n"):
+                            output_file.write(f"{comment_prefix}\n")
+                    else:
+                        # Write content as-is (for bash/bare formats)
+                        output_file.write(content)
+                        # Ensure we end with a newline for proper parsing
+                        if content and not content.endswith("\n"):
+                            output_file.write("\n")
         except Exception as e:
             print(
                 f"Warning: Could not read file '{filepath}'. Skipping. Error: {e}",
@@ -373,7 +385,7 @@ def _write_aiar_data_section(output_file, files_to_archive, base_dir, separator,
             )
 
 
-def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False):
+def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
     """Generates a bash self-extracting aiar script.
     
     Binary files are base64-encoded with :b: marker.
@@ -389,6 +401,7 @@ def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False):
         files_to_archive: Set/list of Path objects to include
         base_dir: Base directory for relative paths
         binary_all: If True, encode all files as binary (base64)
+        verbose: If True, print filenames as they are added
     """
     # Generate a unique separator to prevent collisions with file content.
     # Format: ++++++++++--------:UUID:
@@ -399,10 +412,10 @@ def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False):
     output_file.write(AIAR_HEADER.format(separator=separator))
 
     # Write the data section using the common function
-    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all)
+    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, verbose=verbose)
 
 
-def create_aiar_python(output_file, files_to_archive, base_dir, binary_all=False):
+def create_aiar_python(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
     """Generates a Python self-extracting aiar script.
     
     Binary files are base64-encoded with :b: marker.
@@ -416,9 +429,8 @@ def create_aiar_python(output_file, files_to_archive, base_dir, binary_all=False
         files_to_archive: Set/list of Path objects to include
         base_dir: Base directory for relative paths
         binary_all: If True, encode all files as binary (base64)
+        verbose: If True, print filenames as they are added
     """
-    import base64
-    
     # Generate a unique separator to prevent collisions with file content.
     # Format: ++++++++++--------:UUID:
     separator_uuid = str(uuid.uuid4())
@@ -427,46 +439,39 @@ def create_aiar_python(output_file, files_to_archive, base_dir, binary_all=False
     # Write the header, injecting the unique separator.
     output_file.write(AIAR_PYTHON_HEADER.format(separator=separator))
 
-    sorted_files = sorted(list(files_to_archive))
-
-    for filepath in sorted_files:
-        try:
-            # Create a relative path for the archive to preserve structure.
-            relative_path = filepath.relative_to(base_dir).as_posix()
-
-            # Determine if file should be binary
-            is_binary = binary_all or is_binary_file(filepath)
-            
-            if is_binary:
-                # Binary file: # SEPARATOR:b:filepath
-                output_file.write(f"# {separator}b:{relative_path}\n")
-                with open(filepath, "rb") as f:
-                    data = f.read()
-                    encoded = base64.b64encode(data).decode("ascii")
-                    # Write base64 in chunks of 76 chars for readability, commented
-                    for i in range(0, len(encoded), 76):
-                        output_file.write(f"# {encoded[i:i+76]}\n")
-            else:
-                # Text file: # SEPARATOR:t:filepath
-                output_file.write(f"# {separator}t:{relative_path}\n")
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                    # Read entire content to preserve files without trailing newline
-                    content = f.read()
-                    # Comment each line of the content
-                    for line in content.splitlines(keepends=True):
-                        output_file.write(f"# {line}")
-                    # Ensure we end with a newline for proper parsing
-                    if content and not content.endswith("\n"):
-                        output_file.write("\n")
-                    
-        except Exception as e:
-            print(
-                f"Warning: Could not read file '{filepath}'. Skipping. Error: {e}",
-                file=sys.stderr,
-            )
+    # Write the data section with "# " comment prefix
+    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, comment_prefix="# ", verbose=verbose)
 
 
-def create_aiar_bare(output_file, files_to_archive, base_dir, binary_all=False):
+def create_aiar_nodejs(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
+    """Generates a Node.js self-extracting aiar script.
+    
+    Binary files are base64-encoded with :b: marker.
+    Text files use :t: marker and are embedded as commented text.
+    Format: // SEPARATOR:X:Y:filepath where X is UUID and Y is 'b' or 't'
+    
+    The Node.js script uses regex to extract files from the commented sections.
+    
+    Args:
+        output_file: File object to write the archive to
+        files_to_archive: Set/list of Path objects to include
+        base_dir: Base directory for relative paths
+        binary_all: If True, encode all files as binary (base64)
+        verbose: If True, print filenames as they are added
+    """
+    # Generate a unique separator to prevent collisions with file content.
+    # Format: ++++++++++--------:UUID:
+    separator_uuid = str(uuid.uuid4())
+    separator = f"++++++++++--------:{separator_uuid}:"
+
+    # Write the header, injecting the unique separator.
+    output_file.write(NODE_JS_HEADER.format(separator=separator))
+
+    # Write the data section with "// " comment prefix
+    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, comment_prefix="// ", verbose=verbose)
+
+
+def create_aiar_bare(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
     """Generates a bare data file without self-extraction script.
     
     This format only includes the separator definition and the file data,
@@ -482,6 +487,7 @@ def create_aiar_bare(output_file, files_to_archive, base_dir, binary_all=False):
         files_to_archive: Set/list of Path objects to include
         base_dir: Base directory for relative paths
         binary_all: If True, encode all files as binary (base64)
+        verbose: If True, print filenames as they are added
     """
     # Generate a unique separator to prevent collisions with file content.
     # Format: ++++++++++--------:UUID:
@@ -492,10 +498,10 @@ def create_aiar_bare(output_file, files_to_archive, base_dir, binary_all=False):
     output_file.write(f"SEPARATOR=\"{separator}\"\n\n")
 
     # Write the data section using the common function
-    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all)
+    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, verbose=verbose)
 
 
-def create_aiar(output_file, files_to_archive, base_dir, binary_all=False, lang="bash"):
+def create_aiar(output_file, files_to_archive, base_dir, binary_all=False, lang="bash", verbose=False):
     """Dispatches to the appropriate aiar generator based on language.
     
     Args:
@@ -503,14 +509,17 @@ def create_aiar(output_file, files_to_archive, base_dir, binary_all=False, lang=
         files_to_archive: Set/list of Path objects to include
         base_dir: Base directory for relative paths
         binary_all: If True, encode all files as binary (base64)
-        lang: Language for self-extractor ("bash", "py", or "bare")
+        lang: Language for self-extractor ("bash", "py", "nodejs", or "bare")
+        verbose: If True, print filenames as they are added
     """
     if lang == "py":
-        create_aiar_python(output_file, files_to_archive, base_dir, binary_all)
+        create_aiar_python(output_file, files_to_archive, base_dir, binary_all, verbose)
+    elif lang == "nodejs":
+        create_aiar_nodejs(output_file, files_to_archive, base_dir, binary_all, verbose)
     elif lang == "bare":
-        create_aiar_bare(output_file, files_to_archive, base_dir, binary_all)
+        create_aiar_bare(output_file, files_to_archive, base_dir, binary_all, verbose)
     else:
-        create_aiar_bash(output_file, files_to_archive, base_dir, binary_all)
+        create_aiar_bash(output_file, files_to_archive, base_dir, binary_all, verbose)
 
 
 def _safe_dest(rel: str) -> Path:
@@ -524,7 +533,7 @@ def _safe_dest(rel: str) -> Path:
     return dest
 
 
-def extract_aiar(aiar_file, test_mode=False, output_dir=None):
+def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=None, exclude_patterns=None, verbose=False):
     """Extract files from an aiar archive.
     
     Auto-detects the format (bash, python, or bare) and extracts accordingly.
@@ -533,6 +542,9 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
         aiar_file: Path to the aiar file to extract
         test_mode: If True, only list files without extracting
         output_dir: Directory to extract to (default: current directory)
+        include_patterns: List of glob patterns - only extract matching files
+        exclude_patterns: List of glob patterns - skip matching files
+        verbose: If True, print filenames as they are extracted
     
     Returns:
         List of extracted/listed file paths
@@ -556,10 +568,11 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
             content = f.read()
         
         # Find the separator definition
-        sep_match = re.search(r'SEPARATOR="([^"]+)"', content)
+        # Try different formats: Python/Bash (SEPARATOR="..."), Node.js (const SEPARATOR = "...")
+        sep_match = re.search(r'SEPARATOR\s*=\s*"([^"]+)"', content)
         if not sep_match:
             # Try alternate format (shell variable without quotes)
-            sep_match = re.search(r'SEPARATOR=([^\s\n]+)', content)
+            sep_match = re.search(r'SEPARATOR=([^\s\n;]+)', content)
         
         if not sep_match:
             raise ValueError("Could not find SEPARATOR definition in aiar file")
@@ -567,13 +580,15 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
         separator = sep_match.group(1)
         escaped_sep = re.escape(separator)
         
-        # Detect format: check if content has "# SEPARATOR" (Python) or just "SEPARATOR" (bash/bare)
+        # Detect format: check for comment prefixes
         is_python = f"# {separator}" in content
+        is_nodejs = f"// {separator}" in content
         
-        if is_python:
-            # Python format: files are in comments
+        if is_python or is_nodejs:
+            # Python or Node.js format: files are in comments
+            comment_prefix = "# " if is_python else "// "
             pattern = re.compile(
-                rf"^# ?{escaped_sep}([tb]):([^\n]+)\n(.*?)(?=^# ?{escaped_sep}[tb]:|\Z)",
+                rf"^{re.escape(comment_prefix)}?{escaped_sep}([tb]):([^\n]+)\n(.*?)(?=^{re.escape(comment_prefix)}?{escaped_sep}[tb]:|\Z)",
                 re.DOTALL | re.MULTILINE
             )
             
@@ -582,6 +597,13 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
             for ftype, path, body in pattern.findall(content):
                 found_files += 1
                 path = path.strip()
+                
+                # Apply include/exclude filters
+                if include_patterns and not _matches_patterns(path, include_patterns):
+                    continue
+                if exclude_patterns and _matches_patterns(path, exclude_patterns):
+                    continue
+                
                 try:
                     dest = _safe_dest(path)
                 except ValueError as e:
@@ -597,11 +619,13 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
                     print(f"Skipping already existing file: '{dest}'")
                     continue
                 
-                print(f"Creating: {dest}")
+                if verbose:
+                    print(f"Extracting: {dest}")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
-                # Uncomment the body
-                uncommented_body = re.sub(r"^# ?", "", body, flags=re.MULTILINE)
+                # Uncomment the body using the detected comment prefix
+                uncomment_pattern = r"^" + re.escape(comment_prefix[:-1]) + r" ?"  # Remove trailing space from prefix for pattern
+                uncommented_body = re.sub(uncomment_pattern, "", body, flags=re.MULTILINE)
                 
                 if ftype == "t":
                     with open(dest, "w", encoding="utf-8", newline="\n") as out:
@@ -627,6 +651,13 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
             for ftype, path, body in pattern.findall(content):
                 found_files += 1
                 path = path.strip()
+                
+                # Apply include/exclude filters
+                if include_patterns and not _matches_patterns(path, include_patterns):
+                    continue
+                if exclude_patterns and _matches_patterns(path, exclude_patterns):
+                    continue
+                
                 try:
                     dest = _safe_dest(path)
                 except ValueError as e:
@@ -642,7 +673,8 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
                     print(f"Skipping already existing file: '{dest}'")
                     continue
                 
-                print(f"Creating: {dest}")
+                if verbose:
+                    print(f"Extracting: {dest}")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 if ftype == "t":
@@ -662,6 +694,78 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None):
     finally:
         if original_cwd:
             os.chdir(original_cwd)
+
+
+def _parse_patterns(pattern_args):
+    """Parse pattern arguments that may contain comma-separated lists.
+    
+    Args:
+        pattern_args: List of pattern strings (may be None or contain commas)
+        
+    Returns:
+        List of individual patterns
+    """
+    if not pattern_args:
+        return []
+    
+    patterns = []
+    for arg in pattern_args:
+        # Split by comma and strip whitespace
+        patterns.extend([p.strip() for p in arg.split(',') if p.strip()])
+    
+    return patterns
+
+
+def _matches_patterns(filepath, patterns):
+    """Check if a filepath matches any of the given glob patterns.
+    
+    Args:
+        filepath: Path object or string to check
+        patterns: List of glob patterns
+        
+    Returns:
+        True if matches any pattern, False otherwise
+    """
+    if not patterns:
+        return False
+    
+    import fnmatch
+    filepath_str = str(filepath) if isinstance(filepath, Path) else filepath
+    filepath_posix = filepath_str.replace('\\', '/')
+    
+    for pattern in patterns:
+        # Try matching against full path and just filename
+        if fnmatch.fnmatch(filepath_posix, pattern) or fnmatch.fnmatch(Path(filepath_posix).name, pattern):
+            return True
+    
+    return False
+
+
+def _detect_lang_from_extension(filename):
+    """Detect the language from the output filename extension.
+    
+    Args:
+        filename: The output filename
+        
+    Returns:
+        Detected language or None if no match
+    """
+    if not filename:
+        return None
+    
+    ext = Path(filename).suffix.lower()
+    
+    # Map extensions to languages
+    ext_map = {
+        '.py': 'py',
+        '.js': 'nodejs',
+        '.sh': 'bash',
+        '.bash': 'bash',
+        '.zsh': 'bash',
+        '.aiar': 'bare',
+    }
+    
+    return ext_map.get(ext)
 
 
 def _main():
@@ -698,9 +802,25 @@ def _main():
     )
     create_parser.add_argument(
         "--lang",
-        choices=["bash", "py", "bare"],
-        default="bash",
-        help="Language for self-extracting script: bash, py, or bare (data only, default: bash).",
+        choices=["bash", "py", "nodejs", "bare", "aiar"],
+        default=None,
+        help="Language for self-extracting script: bash, py, nodejs, or bare. Auto-detects from -o extension if not specified (default: bash).",
+    )
+    create_parser.add_argument(
+        "--include",
+        action="append",
+        help="Include only files matching pattern(s). Can be specified multiple times. Supports comma-separated lists (e.g., --include '*.js,*.ts').",
+    )
+    create_parser.add_argument(
+        "--exclude",
+        action="append",
+        help="Exclude files matching pattern(s). Can be specified multiple times. Supports comma-separated lists (e.g., --exclude '*.obj,*.tmp').",
+    )
+    create_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print filenames as they are added to the archive.",
     )
     
     # Extract command
@@ -724,6 +844,22 @@ def _main():
         "--directory",
         help="Extract to specified directory.",
     )
+    extract_parser.add_argument(
+        "--include",
+        action="append",
+        help="Extract only files matching pattern(s). Can be specified multiple times. Supports comma-separated lists (e.g., --include '*.js,*.ts').",
+    )
+    extract_parser.add_argument(
+        "--exclude",
+        action="append",
+        help="Skip files matching pattern(s). Can be specified multiple times. Supports comma-separated lists (e.g., --exclude '*.obj,*.tmp').",
+    )
+    extract_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print filenames as they are extracted.",
+    )
 
     args = parser.parse_args()
     
@@ -744,21 +880,64 @@ def _main():
         # Use a set to handle potential duplicates if paths overlap
         unique_files = set(files_to_process)
 
+        # Apply include/exclude patterns
+        include_patterns = _parse_patterns(args.include)
+        exclude_patterns = _parse_patterns(args.exclude)
+        
+        if include_patterns or exclude_patterns:
+            filtered_files = set()
+            for f in unique_files:
+                rel_path = f.relative_to(base_dir).as_posix()
+                
+                # If include patterns specified, file must match at least one
+                if include_patterns and not _matches_patterns(rel_path, include_patterns):
+                    continue
+                
+                # If exclude patterns specified, file must not match any
+                if exclude_patterns and _matches_patterns(rel_path, exclude_patterns):
+                    continue
+                
+                filtered_files.add(f)
+            
+            unique_files = filtered_files
+
         if not unique_files:
             print("No files found to archive.", file=sys.stderr)
             return
 
+        # Determine language: use --lang if specified, otherwise detect from extension
+        lang = args.lang
+        if args.output and not lang:
+            detected_lang = _detect_lang_from_extension(args.output)
+            if detected_lang:
+                lang = detected_lang
+        
+        # Default to bash if still not determined
+        if not lang:
+            lang = "bash"
+        if lang == "aiar":
+            lang = "bare"
+
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
-                create_aiar(f, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
+                create_aiar(f, unique_files, base_dir, binary_all=args.binary_all, lang=lang, verbose=args.verbose)
             print(f"aiar script created at '{args.output}'")
             os.chmod(args.output, 0o755) # Make it executable
         else:
-            create_aiar(sys.stdout, unique_files, base_dir, binary_all=args.binary_all, lang=args.lang)
+            create_aiar(sys.stdout, unique_files, base_dir, binary_all=args.binary_all, lang=lang, verbose=args.verbose)
     
     elif args.command == "extract":
         try:
-            extract_aiar(args.aiar_file, test_mode=args.test, output_dir=args.directory)
+            include_patterns = _parse_patterns(args.include)
+            exclude_patterns = _parse_patterns(args.exclude)
+            extract_aiar(
+                args.aiar_file,
+                test_mode=args.test,
+                output_dir=args.directory,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                verbose=args.verbose
+            )
             if not args.test:
                 print("Extraction complete.")
         except Exception as e:
@@ -767,11 +946,11 @@ def _main():
 
 
 if __name__ == "__main__":
-    import sys
-    sys.argv = [
-        sys.argv[0],
-        "grip-react",
-        "-o",
-        "grip-react.aiar",
-    ]
+    # import sys
+    # sys.argv = [
+    #     sys.argv[0],
+    #     "grip-react",
+    #     "-o",
+    #     "grip-react.aiar",
+    # ]
     _main()
