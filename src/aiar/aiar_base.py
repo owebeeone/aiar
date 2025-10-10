@@ -243,6 +243,94 @@ console.log("Extraction complete.");
 process.exit(0);
 """
 
+POWERSHELL_HEADER = r"""#Requires -Version 5.1
+
+$SEPARATOR="{separator}"
+
+function Escape-Regex {{
+    param(
+        [string]$String
+    )
+    return [System.Text.RegularExpressions.Regex]::Escape($String)
+}}
+
+function Safe-Dest {{
+    param(
+        [string]$RelativePath
+    )
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) {{
+        throw "Absolute path not allowed: $RelativePath"
+    }}
+
+    $resolvedPath = [System.IO.Path]::GetFullPath((Join-Path -Path $PWD.Path -ChildPath $RelativePath))
+    
+    if (-not $resolvedPath.StartsWith($PWD.Path)) {{
+        throw "Path escapes output root: $RelativePath"
+    }}
+    return $resolvedPath
+}}
+
+function Extract-All {{
+    $scriptPath = $PSCommandPath
+    $scriptContent = Get-Content -Path $scriptPath -Raw
+
+    $sep = Escape-Regex "$SEPARATOR"
+    $pattern = "(?ms)^#\s?$sep([tb]):([^\n]+)\n(.*?)(?=(^#\s?$sep[tb]:|\Z))"
+    
+    $matches = [System.Text.RegularExpressions.Regex]::Matches($scriptContent, $pattern)
+
+    if ($matches.Count -eq 0) {{
+        Write-Error "No payload sections found in data block."
+        exit 1
+    }}
+
+    foreach ($match in $matches) {{
+        $ftype = $match.Groups[1].Value
+        $relPath = $match.Groups[2].Value.Trim()
+        $body = $match.Groups[3].Value
+
+        try {{
+            $dest = Safe-Dest -RelativePath $relPath
+        }}
+        catch {{
+            Write-Warning "Warning: $_. Skipping."
+            continue
+        }}
+
+        if (Test-Path -LiteralPath $dest) {{
+            Write-Output "Skipping already existing file: '$dest'"
+            continue
+        }}
+
+        Write-Output "Creating: $dest"
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Path $dest -Parent)
+
+        $uncommentedBody = $body -replace '(?m)^#\s?' , ''
+
+        if ($ftype -eq 't') {{ # Text file
+            Set-Content -Path $dest -Value $uncommentedBody -NoNewline -Encoding utf8
+        }}
+        elseif ($ftype -eq 'b') {{ # Binary file
+            $cleanBase64String = $uncommentedBody -replace '\s'
+            $bytes = [System.Convert]::FromBase64String($cleanBase64String)
+            [System.IO.File]::WriteAllBytes($dest, $bytes)
+        }}
+        else {{
+            Write-Warning "Unknown file type '$ftype' for '$relPath'. Skipping."
+        }}
+    }}
+}}
+
+# --- Main execution ---
+Extract-All
+Write-Output "Extraction complete."
+
+# The script must exit here to prevent PowerShell from trying to interpret the payload.
+exit 0
+
+# --- PAYLOAD ---
+"""
+
 def find_git_root(start_path):
     """Find the root of the git repository."""
     p = Path(start_path).resolve()
@@ -471,6 +559,34 @@ def create_aiar_nodejs(output_file, files_to_archive, base_dir, binary_all=False
     _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, comment_prefix="// ", verbose=verbose)
 
 
+def create_aiar_powershell(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
+    """Generates a PowerShell self-extracting aiar script.
+    
+    Binary files are base64-encoded with :b: marker.
+    Text files use :t: marker and are embedded as commented text.
+    Format: # SEPARATOR:X:Y:filepath where X is UUID and Y is 'b' or 't'
+    
+    The PowerShell script uses regex to extract files from the commented sections.
+    
+    Args:
+        output_file: File object to write the archive to
+        files_to_archive: Set/list of Path objects to include
+        base_dir: Base directory for relative paths
+        binary_all: If True, encode all files as binary (base64)
+        verbose: If True, print filenames as they are added
+    """
+    # Generate a unique separator to prevent collisions with file content.
+    # Format: ++++++++++--------:UUID:
+    separator_uuid = str(uuid.uuid4())
+    separator = f"++++++++++--------:{separator_uuid}:"
+
+    # Write the header, injecting the unique separator.
+    output_file.write(POWERSHELL_HEADER.format(separator=separator))
+
+    # Write the data section with "# " comment prefix
+    _write_aiar_data_section(output_file, files_to_archive, base_dir, separator, binary_all, comment_prefix="# ", verbose=verbose)
+
+
 def create_aiar_bare(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
     """Generates a bare data file without self-extraction script.
     
@@ -509,13 +625,15 @@ def create_aiar(output_file, files_to_archive, base_dir, binary_all=False, lang=
         files_to_archive: Set/list of Path objects to include
         base_dir: Base directory for relative paths
         binary_all: If True, encode all files as binary (base64)
-        lang: Language for self-extractor ("bash", "py", "nodejs", or "bare")
+        lang: Language for self-extractor ("bash", "py", "nodejs", "powershell", or "bare")
         verbose: If True, print filenames as they are added
     """
     if lang == "py":
         create_aiar_python(output_file, files_to_archive, base_dir, binary_all, verbose)
     elif lang == "nodejs":
         create_aiar_nodejs(output_file, files_to_archive, base_dir, binary_all, verbose)
+    elif lang == "powershell" or lang == "ps1":
+        create_aiar_powershell(output_file, files_to_archive, base_dir, binary_all, verbose)
     elif lang == "bare":
         create_aiar_bare(output_file, files_to_archive, base_dir, binary_all, verbose)
     else:
@@ -594,12 +712,17 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
         escaped_sep = re.escape(separator)
         
         # Detect format: check for comment prefixes
-        is_python = f"# {separator}" in content
+        is_python = f"# {separator}" in content and "def extract_all():" in content
         is_nodejs = f"// {separator}" in content
+        is_powershell = "$SEPARATOR=" in content or (f"# {separator}" in content and "function Extract-All" in content)
         
-        if is_python or is_nodejs:
-            # Python or Node.js format: files are in comments
-            comment_prefix = "# " if is_python else "// "
+        if is_python or is_nodejs or is_powershell:
+            # Python, Node.js, or PowerShell format: files are in comments
+            if is_nodejs:
+                comment_prefix = "// "
+            else:
+                comment_prefix = "# "
+            
             pattern = re.compile(
                 rf"^{re.escape(comment_prefix)}?{escaped_sep}([tb]):([^\n]+)\n(.*?)(?=^{re.escape(comment_prefix)}?{escaped_sep}[tb]:|\Z)",
                 re.DOTALL | re.MULTILINE
@@ -617,12 +740,6 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                 if exclude_patterns and _matches_patterns(path, exclude_patterns):
                     continue
                 
-                try:
-                    dest = _safe_dest(path)
-                except ValueError as e:
-                    print(f"Warning: {e}. Skipping.")
-                    continue
-                
                 if test_mode:
                     # Show path with output_dir prefix if specified
                     if output_dir_name:
@@ -631,6 +748,16 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                         display_path = path
                     print(display_path)
                     extracted_files.append(path)
+                    continue
+                
+                # Create output directory now (before checking if file exists)
+                ensure_output_dir()
+                
+                # Resolve dest after potentially changing directory
+                try:
+                    dest = _safe_dest(path)
+                except ValueError as e:
+                    print(f"Warning: {e}. Skipping.")
                     continue
                 
                 if dest.exists():
@@ -645,8 +772,6 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                         display_path = path
                     print(f"Extracting: {display_path}")
                 
-                # Create output directory now that we know we have a file to extract
-                ensure_output_dir()
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Uncomment the body using the detected comment prefix
@@ -684,12 +809,6 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                 if exclude_patterns and _matches_patterns(path, exclude_patterns):
                     continue
                 
-                try:
-                    dest = _safe_dest(path)
-                except ValueError as e:
-                    print(f"Warning: {e}. Skipping.")
-                    continue
-                
                 if test_mode:
                     # Show path with output_dir prefix if specified
                     if output_dir_name:
@@ -698,6 +817,16 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                         display_path = path
                     print(display_path)
                     extracted_files.append(path)
+                    continue
+                
+                # Create output directory now (before checking if file exists)
+                ensure_output_dir()
+                
+                # Resolve dest after potentially changing directory
+                try:
+                    dest = _safe_dest(path)
+                except ValueError as e:
+                    print(f"Warning: {e}. Skipping.")
                     continue
                 
                 if dest.exists():
@@ -712,8 +841,6 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                         display_path = path
                     print(f"Extracting: {display_path}")
                 
-                # Create output directory now that we know we have a file to extract
-                ensure_output_dir()
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 if ftype == "t":
@@ -731,7 +858,7 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
         return extracted_files
     
     finally:
-        if original_cwd:
+        if original_cwd and directory_created:
             os.chdir(original_cwd)
 
 
@@ -801,6 +928,8 @@ def _detect_lang_from_extension(filename):
         '.sh': 'bash',
         '.bash': 'bash',
         '.zsh': 'bash',
+        '.ps1': 'powershell',
+        '.psm1': 'powershell',
         '.aiar': 'bare',
     }
     
@@ -841,9 +970,9 @@ def _main():
     )
     create_parser.add_argument(
         "--lang",
-        choices=["bash", "py", "nodejs", "bare", "aiar"],
+        choices=["bash", "py", "nodejs", "powershell", "ps1", "bare", "aiar"],
         default=None,
-        help="Language for self-extracting script: bash, py, nodejs, or bare. Auto-detects from -o extension if not specified (default: bash).",
+        help="Language for self-extracting script: bash, py, nodejs, powershell (or ps1), or bare. Auto-detects from -o extension if not specified (default: bash).",
     )
     create_parser.add_argument(
         "--include",
