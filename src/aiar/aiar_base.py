@@ -555,10 +555,14 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
     # Resolve the aiar_file path before changing directories
     aiar_file = Path(aiar_file).resolve()
     
+    # Store the original working directory and output_dir for verbose output
+    original_cwd = Path.cwd()
+    output_dir_name = None
+    
     if output_dir:
+        output_dir_name = output_dir  # Keep original name for display
         output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        original_cwd = Path.cwd()
         os.chdir(output_dir)
     else:
         original_cwd = None
@@ -611,7 +615,12 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     continue
                 
                 if test_mode:
-                    print(path)
+                    # Show path with output_dir prefix if specified
+                    if output_dir_name:
+                        display_path = str(Path(output_dir_name) / path)
+                    else:
+                        display_path = path
+                    print(display_path)
                     extracted_files.append(path)
                     continue
                 
@@ -620,7 +629,12 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     continue
                 
                 if verbose:
-                    print(f"Extracting: {dest}")
+                    # Show path with output_dir prefix if specified
+                    if output_dir_name:
+                        display_path = str(Path(output_dir_name) / path)
+                    else:
+                        display_path = path
+                    print(f"Extracting: {display_path}")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Uncomment the body using the detected comment prefix
@@ -665,7 +679,12 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     continue
                 
                 if test_mode:
-                    print(path)
+                    # Show path with output_dir prefix if specified
+                    if output_dir_name:
+                        display_path = str(Path(output_dir_name) / path)
+                    else:
+                        display_path = path
+                    print(display_path)
                     extracted_files.append(path)
                     continue
                 
@@ -674,7 +693,12 @@ def extract_aiar(aiar_file, test_mode=False, output_dir=None, include_patterns=N
                     continue
                 
                 if verbose:
-                    print(f"Extracting: {dest}")
+                    # Show path with output_dir prefix if specified
+                    if output_dir_name:
+                        display_path = str(Path(output_dir_name) / path)
+                    else:
+                        display_path = path
+                    print(f"Extracting: {display_path}")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 
                 if ftype == "t":
