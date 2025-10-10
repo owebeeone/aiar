@@ -23,21 +23,49 @@ even be desirable if you don't want to run code directly from an LLM.
 2. **The exit 0 Guard:** This command prevents the shell from ever trying to execute the data section below it. 
 3. **The Data Payload:** The raw, unescaped contents of your files, each preceded by the unique separator line.
 
-## **Python and Modejs Self Extracting Archives
+## **Supported Formats**
 
-The aiar script will also create nodejs and python self extracting archives however, while an LLM could 
-create these, they are a little more work for an LLM since the files need to include a comment prefix on 
-each line. However, 
+The `aiar` tool supports multiple output formats:
 
-### **Example aiar File**
+- **bare** (`.aiar`) - Data-only format without self-extraction script. Most LLM-friendly for creation.
+- **bash** (`.sh`) - Self-extracting Bash script (default). Compatible with Linux/macOS/WSL.
+- **python** (`.py`) - Self-extracting Python script. Requires Python 3.6+.
+- **nodejs** (`.js`) - Self-extracting Node.js script. Requires Node.js.
+- **powershell** (`.ps1`) - Self-extracting PowerShell script. Requires PowerShell 5.1+.
 
-This is what an aiar script looks like. You can save it as `archive.aiar`, run `bash archive.aiar`, and it will create the directory with the files inside. This example can also be extracted using the Python aiar tool.
+All formats support both text and binary files and can be extracted using the `aiar extract` command.
 
-**Note for LLMs:** To create a bare format archive that can be extracted with the Python tool, you need:
-1. `SEPARATOR="..."` line. This must be a string not found in the files intended to be extracted.
-2. Each file marked with `:t:` for text (or `:b:` for binary)
-3. The format: `SEPARATOR:t:filepath` followed by file content
-If you don't add any binary files you can simplify the script by not including the binary extractor.
+### **Example Archives**
+
+Below are examples of each format. Each demonstrates the same two-file archive structure.
+
+## **Bare Format (.aiar)**
+
+The bare format is the simplest and most LLM-friendly. It contains only the data with a separator definition, no extraction logic. This format can be extracted using `aiar extract archive.aiar`.
+
+**Note for LLMs:** To create a bare format archive:
+1. Start with `SEPARATOR="..."` (use a unique string not found in file contents)
+2. Mark each file with `:t:` for text or `:b:` for binary
+3. Use format: `SEPARATOR:t:filepath` followed by file content
+4. The contents of the binary blobs are base64 encoded.
+
+```
+SEPARATOR="++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:"
+
+++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/README.md
+# Example Project
+
+This is a sample file in the bare aiar format.
+
+++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/hello.txt
+Hello from aiar!
+This file can contain any text content.
+Special characters like $, #, ', ", `, $(cmd) are preserved literally.
+```
+
+## **Bash Format (.sh)**
+
+The Bash format is a self-extracting shell script. Save as `archive.sh` and run with `bash archive.sh`.
 
 ```bash
 #!/bin/bash
@@ -90,26 +118,264 @@ exit 0
 
 # --- DATA ---
 
-++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/testA/file.txt
-This is the content for the first file (testA/file.txt).
+++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/README.md
+# Example Project
 
-It includes special characters that the shell might normally interpret:
-- A dollar sign: $PATH
-- A hash symbol: # This is just text, not a comment.
-- Single quotes: 'hello world'
-- Double quotes: "goodbye world"
-- Backticks: `should not execute`
-- A command substitution attempt: $(ls)
+This file includes special characters: $PATH, #comment, 'quotes', "quotes", `backticks`, $(cmd)
+All are preserved literally.
 
-All of these should be written literally to the file.
-
-++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/testB/file.txt
-This is the second file (testB/file.txt).
-
-Let's add some more tricky lines.
+++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/hello.txt
+Hello from aiar!
 She said, "He's going to the store for $5."
-The script's path is '$0'.
-# Another line starting with a hash.
+```
+
+## **Python Format (.py)**
+
+The Python format is a self-extracting Python script. Save as `archive.py` and run with `python archive.py`. Files are embedded as commented lines with `# ` prefix.
+
+```python
+import sys, os, re, base64
+from pathlib import Path
+
+SEPARATOR="++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:"
+SEP = re.escape(SEPARATOR)
+
+def _safe_dest(rel: str) -> Path:
+    p = Path(rel)
+    if p.is_absolute():
+        raise ValueError(f"Absolute path not allowed: {rel}")
+    dest = (Path(".") / p).resolve()
+    if Path(".").resolve() not in (set(dest.parents) | {dest}):
+        raise ValueError(f"Path escapes output root: {rel}")
+    return dest
+
+def extract_all():
+    with open(__file__, "r", encoding="utf-8") as f:
+        script_content = f.read()
+
+    pat = re.compile(
+        rf"^# ?{SEP}([tb]):([^\n]+)\n(.*?)(?=^# ?{SEP}[tb]:|\Z)",
+        re.DOTALL | re.MULTILINE,)
+
+    any_found = False
+    for ftype, path, body in pat.findall(script_content):
+        any_found = True
+        path = path.strip()
+        try:
+            dest = _safe_dest(path)
+        except ValueError as e:
+            print(f"Warning: {e}. Skipping.")
+            continue
+
+        if dest.exists():
+            print(f"Skipping already existing file: '{dest}'")
+            continue
+
+        print(f"Creating: {dest}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        
+        uncommented_body = re.sub(r"^# ?", "", body, flags=re.MULTILINE)
+        
+        if ftype == "t":
+            with open(dest, "w", encoding="utf-8", newline="\n") as out:
+                out.write(uncommented_body)
+        else:  # binary
+            with open(dest, "wb") as out:
+                out.write(base64.b64decode(uncommented_body.strip().encode("ascii"), validate=False))
+
+    if not any_found:
+        print("Error: No payload sections found in data block.")
+        sys.exit(1)
+
+extract_all()
+print("Extraction complete.")
+sys.exit(0)
+
+# ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/README.md
+# # Example Project
+# 
+# This file includes special characters: $PATH, #comment, 'quotes', "quotes", `backticks`, $(cmd)
+# All are preserved literally.
+# 
+# ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/hello.txt
+# Hello from aiar!
+# She said, "He's going to the store for $5."
+```
+
+## **Node.js Format (.js)**
+
+The Node.js format is a self-extracting Node.js script. Save as `archive.js` and run with `node archive.js`. Files are embedded as commented lines with `// ` prefix.
+
+```javascript
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const SEPARATOR = "++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:";
+const SEP = escapeRegex(SEPARATOR);
+
+function safeDest(rel) {
+    if (path.isAbsolute(rel)) {
+        throw new Error(`Absolute path not allowed: ${rel}`);
+    }
+    const dest = path.resolve(process.cwd(), rel);
+    if (!dest.startsWith(process.cwd())) {
+        throw new Error(`Path escapes output root: ${rel}`);
+    }
+    return dest;
+}
+
+function extractAll() {
+    const scriptContent = fs.readFileSync(__filename, 'utf8');
+
+    const pat = new RegExp(
+        `^// ?${SEP}([tb]):([^\\n]+)\\n(.*?)(?=(^// ?${SEP}[tb]:|\\Z))`,
+        'gms'
+    );
+
+    const matches = [...scriptContent.matchAll(pat)];
+
+    if (matches.length === 0) {
+        console.error("Error: No payload sections found in data block.");
+        process.exit(1);
+    }
+    
+    for (const match of matches) {
+        const [, ftype, relPath, body] = match;
+        const cleanPath = relPath.trim();
+        
+        let dest;
+        try {
+            dest = safeDest(cleanPath);
+        } catch (e) {
+            console.warn(`Warning: ${e.message}. Skipping.`);
+            continue;
+        }
+
+        if (fs.existsSync(dest)) {
+            console.log(`Skipping already existing file: '${dest}'`);
+            continue;
+        }
+
+        console.log(`Creating: ${dest}`);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+
+        const uncommentedBody = body.replace(/^\/\/ ?/gm, '');
+
+        if (ftype === 't') {
+            fs.writeFileSync(dest, uncommentedBody, { encoding: 'utf8' });
+        } else {
+            const buffer = Buffer.from(uncommentedBody.trim(), 'base64');
+            fs.writeFileSync(dest, buffer);
+        }
+    }
+}
+
+extractAll();
+console.log("Extraction complete.");
+process.exit(0);
+
+// ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/README.md
+// # Example Project
+// 
+// This file includes special characters: $PATH, #comment, 'quotes', "quotes", `backticks`, $(cmd)
+// All are preserved literally.
+// 
+// ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/hello.txt
+// Hello from aiar!
+// She said, "He's going to the store for $5."
+```
+
+## **PowerShell Format (.ps1)**
+
+The PowerShell format is a self-extracting PowerShell script. Save as `archive.ps1` and run with `powershell -ExecutionPolicy Bypass -File archive.ps1`. Files are embedded as commented lines with `# ` prefix.
+
+```powershell
+#Requires -Version 5.1
+
+$SEPARATOR="++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:"
+
+function Escape-Regex {
+    param([string]$String)
+    return [System.Text.RegularExpressions.Regex]::Escape($String)
+}
+
+function Safe-Dest {
+    param([string]$RelativePath)
+    if ([System.IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Absolute path not allowed: $RelativePath"
+    }
+    $resolvedPath = [System.IO.Path]::GetFullPath((Join-Path -Path $PWD.Path -ChildPath $RelativePath))
+    if (-not $resolvedPath.StartsWith($PWD.Path)) {
+        throw "Path escapes output root: $RelativePath"
+    }
+    return $resolvedPath
+}
+
+function Extract-All {
+    $scriptPath = $PSCommandPath
+    $scriptContent = Get-Content -Path $scriptPath -Raw
+    $sep = Escape-Regex "$SEPARATOR"
+    $pattern = "(?ms)^#\s?$sep([tb]):([^\n]+)\n(.*?)(?=(^#\s?$sep[tb]:|\Z))"
+    $matches = [System.Text.RegularExpressions.Regex]::Matches($scriptContent, $pattern)
+
+    if ($matches.Count -eq 0) {
+        Write-Error "No payload sections found in data block."
+        exit 1
+    }
+
+    foreach ($match in $matches) {
+        $ftype = $match.Groups[1].Value
+        $relPath = $match.Groups[2].Value.Trim()
+        $body = $match.Groups[3].Value
+
+        try {
+            $dest = Safe-Dest -RelativePath $relPath
+        } catch {
+            Write-Warning "Warning: $_. Skipping."
+            continue
+        }
+
+        if (Test-Path -LiteralPath $dest) {
+            Write-Output "Skipping already existing file: '$dest'"
+            continue
+        }
+
+        Write-Output "Creating: $dest"
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Path $dest -Parent)
+        $uncommentedBody = $body -replace '(?m)^#\s?' , ''
+
+        if ($ftype -eq 't') {
+            Set-Content -Path $dest -Value $uncommentedBody -NoNewline -Encoding utf8
+        } elseif ($ftype -eq 'b') {
+            $cleanBase64String = $uncommentedBody -replace '\s'
+            $bytes = [System.Convert]::FromBase64String($cleanBase64String)
+            [System.IO.File]::WriteAllBytes($dest, $bytes)
+        } else {
+            Write-Warning "Unknown file type '$ftype' for '$relPath'. Skipping."
+        }
+    }
+}
+
+Extract-All
+Write-Output "Extraction complete."
+exit 0
+
+# --- PAYLOAD ---
+# ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/README.md
+# # Example Project
+# 
+# This file includes special characters: $PATH, #comment, 'quotes', "quotes", `backticks`, $(cmd)
+# All are preserved literally.
+# 
+# ++++++++++--------:a1b2c3d4-5678-90ab-cdef-1234567890ab:t:example/hello.txt
+# Hello from aiar!
+# She said, "He's going to the store for $5."
 ```
 
 

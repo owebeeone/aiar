@@ -1117,8 +1117,9 @@ if __name__ == "__main__":
     # import sys
     # sys.argv = [
     #     sys.argv[0],
+    #     "create",
     #     "grip-react",
     #     "-o",
-    #     "grip-react.aiar",
+    #     "grip-react.ps1",
     # ]
     _main()
