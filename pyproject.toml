@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aiar"
-version = "0.1.2"
+version = "0.1.3"
 description = "AI Archive is a format and a tool for bundling a directory structure and its files into a single, executable bash/zsh script. It's designed to make sending and receiving file collections in a chat-based or text-only environment—like interacting with an LLM—as simple as copying and pasting a single block of text."
 readme = "README.md"
 authors = [
