@@ -1,10 +1,10 @@
 # **aiar (AI Archive)**
 
 
-[![PyPI version](https://badge.fury.io/py/arai.svg)](https://pypi.org/project/arai/)
+[![PyPI version](https://badge.fury.io/py/aiar.svg)](https://pypi.org/project/aiar/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub](https://img.shields.io/badge/github-arai-blue.svg)](https://github.com/owebeeone/arai)
+[![GitHub](https://img.shields.io/badge/github-aiar-blue.svg)](https://github.com/owebeeone/aiar)
 
 
 **A simple LLM-friendly archive format and utility for creating self-extracting shell archives.**
