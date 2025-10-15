@@ -1,21 +1,62 @@
+[project]
+name = "aiar"
+version = "0.1.5"
+description = "AI Archive is a format and a tool for bundling a directory structure and its files into a single, executable bash/zsh script. It's designed to make sending and receiving file collections in a chat-based or text-only environment—like interacting with an LLM—as simple as copying and pasting a single block of text."
+authors = [
+    { name = "Gianni Mariani", email = "gianni@mariani.ws" },
+]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Archiving",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pathspec>=0.12.1",
+]
+
+[project.license]
+text = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/owebeeone/aiar"
+Issues = "https://github.com/owebeeone/aiar/issues"
+
+[project.scripts]
+aiar = "aiar:_main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+]
+
 [build-system]
 requires = [
     "hatchling",
 ]
 build-backend = "hatchling.build"
 
-[project]
-name = "aiar"
-version = "0.1.5"
-description = "AI Archive is a format and a tool for bundling a directory structure and its files into a single, executable bash/zsh script. It's designed to make sending and receiving file collections in a chat-based or text-only environment—like interacting with an LLM—as simple as copying and pasting a single block of text."
-readme = "README.md"
-authors = [
-    { name = "Gianni Mariani", email = "gianni@mariani.ws" },
-]
-requires-python = ">=3.10"
-dependencies = [
-    "pathspec>=0.12.1",
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
 ]
 
-[project.scripts]
-aiar = "aiar:_main"
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
