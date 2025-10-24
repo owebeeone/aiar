@@ -10,4 +10,4 @@ __all__ = [
     "extract_aiar",
 ]
 
-__version__ = '0.1.0'
+__version__ = "0.1.9"
