@@ -1080,7 +1080,15 @@ def _main():
         elif base_dir in resolved_paths:
             base_dir = base_dir.parent
 
-        spec = get_gitignore_spec(base_dir, not args.no_gitignore)
+        # For gitignore purposes, we need to find the appropriate directory that contains
+        # the .gitignore file. If we're archiving a subdirectory, we should look for
+        # gitignore patterns in that subdirectory's context, not the parent.
+        gitignore_base_dir = base_dir
+        if len(resolved_paths) == 1 and resolved_paths[0].is_dir():
+            # If we're archiving a single directory, use that directory for gitignore
+            gitignore_base_dir = resolved_paths[0]
+
+        spec = get_gitignore_spec(gitignore_base_dir, not args.no_gitignore)
         files_to_process = find_files_to_archive(resolved_paths, spec, base_dir, verbose=args.verbose)
 
         # Use a set to handle potential duplicates if paths overlap
