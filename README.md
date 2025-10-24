@@ -2,7 +2,7 @@
 
 
 [![PyPI version](https://badge.fury.io/py/aiar.svg)](https://pypi.org/project/aiar/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub](https://img.shields.io/badge/github-aiar-blue.svg)](https://github.com/owebeeone/aiar)
 
@@ -80,9 +80,10 @@ The Bash format is a self-extracting shell script. Save as `archive.sh` and run 
 #
 # Note to LLMS, this archive contains multiple files with separator lines. #
 # Text files are contained between separators verbatim, binary files are base64-encoded. #
-# Every line ends with a '#' character to guard against a possible CRLF line ending that #
-# would otherwise cause the script in cases where CRLF line endings are not supported. #
-# Choose a random separator to avoid conflicts when archiving archives. #
+# Every line in the extractor shell script ends with a '#' character to guard against a #
+# possible CRLF line ending that would otherwise cause script failure in cases where CRLF #
+# line endings are not supported. Choose a random SEPARATOR string to avoid conflicts when #
+# archiving archives. #
 #
 SEPARATOR="++++++++++--------:8c7163c6-4902-46b0-9629-f75517de083c:" #
 writing=false #
@@ -116,25 +117,9 @@ while read -r line; do #
       echo "Creating: $filepath" #
       mkdir -p "$(dirname "$filepath")" || handle_error "Cannot create directory for '$filepath'." #
 #
-      if [ "$type" == "b" ]; then #
-        # Use process substitution to pipe output to base64 decoder #
-        # Wrap the entire pipeline in a single process that can be waited on #
-        # Use sed to strip any trailing carriage returns from base64 input #
-        exec 3> >( #
-          error_file="$(mktemp)" #
-          trap "rm -f \"$error_file\"" EXIT #
-          sed 's/\r$//' | base64 -d > "$filepath" 2>"$error_file" #
-          if [ -s "$error_file" ]; then #
-            echo "Error: base64 decoding failed for '$filepath':" >&2 #
-            cat "$error_file" >&2 #
-            rm -f "$filepath" #
-            exit 1 #
-          fi #
-        ) || handle_error "Cannot start base64 process for '$filepath'." #
-        writing=true #
-      elif [ "$type" == "t" ]; then #
+      if [ "$type" == "t" ]; then #
         exec 3>"$filepath" || handle_error "Cannot open '$filepath' for writing." #
-      writing=true #
+        writing=true #
       else #
         handle_error "Invalid file type '$type' in separator." #
       fi #

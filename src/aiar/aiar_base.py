@@ -32,6 +32,26 @@ except ImportError:
     print("         Install it with: pip install pathspec", file=sys.stderr)
     pathspec = None
 
+
+AIAR_BINARY_SUPPLEMENT="""\
+      elif [ "$type" == "b" ]; then
+        # Use process substitution to pipe output to base64 decoder
+        # Wrap the entire pipeline in a single process that can be waited on
+        # Use sed to strip any trailing carriage returns from base64 input
+        exec 3> >(
+          error_file="$(mktemp)"
+          trap "rm -f \\"$error_file\\"" EXIT
+          sed 's/\\r$//' | base64 -d > "$filepath" 2>"$error_file"
+          if [ -s "$error_file" ]; then
+            echo "Error: base64 decoding failed for '$filepath':" >&2
+            cat "$error_file" >&2
+            rm -f "$filepath"
+            exit 1
+          fi
+        ) || handle_error "Cannot start base64 process for '$filepath'."
+        writing=true
+"""
+
 # This is the static bash script that will unpack the archive.
 # The unique separator is injected into it when the script is generated.
 AIAR_HEADER = """#!/bin/bash
@@ -39,9 +59,10 @@ AIAR_HEADER = """#!/bin/bash
 
 # Note to LLMS, this archive contains multiple files with separator lines.
 # Text files are contained between separators verbatim, binary files are base64-encoded.
-# Every line ends with a '#' character to guard against a possible CRLF line ending that
-# would otherwise cause the script in cases where CRLF line endings are not supported.
-# Choose a random separator to avoid conflicts when archiving archives.
+# Every line in the extractor shell script ends with a '#' character to guard against a
+# possible CRLF line ending that would otherwise cause script failure in cases where CRLF
+# line endings are not supported. Choose a random SEPARATOR string to avoid conflicts when
+# archiving archives.
 
 SEPARATOR="{separator}"
 writing=false
@@ -75,25 +96,10 @@ while read -r line; do
       echo "Creating: $filepath"
       mkdir -p "$(dirname "$filepath")" || handle_error "Cannot create directory for '$filepath'."
 
-      if [ "$type" == "b" ]; then
-        # Use process substitution to pipe output to base64 decoder
-        # Wrap the entire pipeline in a single process that can be waited on
-        # Use sed to strip any trailing carriage returns from base64 input
-        exec 3> >(
-          error_file="$(mktemp)"
-          trap "rm -f \\"$error_file\\"" EXIT
-          sed 's/\\r$//' | base64 -d > "$filepath" 2>"$error_file"
-          if [ -s "$error_file" ]; then
-            echo "Error: base64 decoding failed for '$filepath':" >&2
-            cat "$error_file" >&2
-            rm -f "$filepath"
-            exit 1
-          fi
-        ) || handle_error "Cannot start base64 process for '$filepath'."
-        writing=true
-      elif [ "$type" == "t" ]; then
+      if [ "$type" == "t" ]; then
         exec 3>"$filepath" || handle_error "Cannot open '$filepath' for writing."
-      writing=true
+        writing=true
+{binary_supplement}\
       else
         handle_error "Invalid file type '$type' in separator."
       fi
@@ -499,6 +505,12 @@ def _write_aiar_data_section(output_file, files_to_archive, base_dir, separator,
                 file=sys.stderr,
             )
 
+def _check_if_binary_file(files_to_archive):
+    """Check if any of the files in the archive are binary."""
+    for filepath in files_to_archive:
+        if is_binary_file(filepath):
+            return True
+    return False
 
 def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False, verbose=False):
     """Generates a bash self-extracting aiar script.
@@ -528,7 +540,14 @@ def create_aiar_bash(output_file, files_to_archive, base_dir, binary_all=False, 
     # to make any stray \r characters harmless (they'll be in comments)
     # Skip the first line (shebang) which must not have anything after it
     # Empty lines get just "#" without the space
-    header = AIAR_HEADER.format(separator=separator).replace('\r\n', '\n').replace('\r', '\n')
+    if binary_all or _check_if_binary_file(files_to_archive):
+        binary_supplement = AIAR_BINARY_SUPPLEMENT
+    else:
+        binary_supplement = ""
+
+    header = AIAR_HEADER.format(
+        separator=separator,
+        binary_supplement=binary_supplement).replace('\r\n', '\n').replace('\r', '\n')
     lines = header.split('\n')
     header_with_comments = lines[0] + '\n' + '\n'.join('#' if line == '' else line + ' #' for line in lines[1:]) + '\n'
     output_file.write(header_with_comments)
@@ -1084,9 +1103,14 @@ def _main():
         # the .gitignore file. If we're archiving a subdirectory, we should look for
         # gitignore patterns in that subdirectory's context, not the parent.
         gitignore_base_dir = base_dir
-        if len(resolved_paths) == 1 and resolved_paths[0].is_dir():
-            # If we're archiving a single directory, use that directory for gitignore
-            gitignore_base_dir = resolved_paths[0]
+        
+        # If any of the input paths is a directory, we should look for gitignore rules
+        # in the most specific directory context. If there are multiple directories,
+        # we'll use the one that's most deeply nested (or the first one if they're at the same level).
+        directory_paths = [p for p in resolved_paths if p.is_dir()]
+        if directory_paths:
+            # Use the most specific (deepest) directory for gitignore purposes
+            gitignore_base_dir = max(directory_paths, key=lambda p: len(p.parts))
 
         spec = get_gitignore_spec(gitignore_base_dir, not args.no_gitignore)
         files_to_process = find_files_to_archive(resolved_paths, spec, base_dir, verbose=args.verbose)
